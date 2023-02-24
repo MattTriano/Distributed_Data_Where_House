@@ -6,3 +6,4 @@ airflow/logs*
 notes/*
 sandbox/*
 src/
+logs/

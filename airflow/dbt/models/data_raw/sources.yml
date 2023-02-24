@@ -1,0 +1,16 @@
+version: 2
+sources:
+  - name: data_raw
+    database: dwh_db_name
+    schema: data_raw
+    tags:
+      - raw
+    tables:
+      - name: chicago_potholes_patched
+      - name: cook_county_neighborhood_boundaries
+      - name: cook_county_parcel_locations
+      - name: cook_county_parcel_sales
+      - name: temp_chicago_potholes_patched
+      - name: temp_cook_county_neighborhood_boundaries
+      - name: temp_cook_county_parcel_locations
+      - name: temp_cook_county_parcel_sales

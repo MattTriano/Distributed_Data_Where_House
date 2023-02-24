@@ -40,10 +40,10 @@
 ---
 version: '3'
 x-airflow-common:
-  &airflow-common
   # In order to add custom dependencies or upgrade provider packages you can use your extended image.
   # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
   # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
+  &airflow-common
   build:
     context: ./
     dockerfile: ./Dockerfiles/airflow.Dockerfile
@@ -61,6 +61,7 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    GE_JUPYTER_CMD: "jupyter lab --allow-root --ip 0.0.0.0 --port 18888"
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -68,6 +69,7 @@ x-airflow-common:
     - ./airflow/plugins:/opt/airflow/plugins
     - ./airflow/data_raw:/opt/airflow/data_raw
     - ./airflow/dbt:/opt/airflow/dbt
+    - ./airflow/great_expectations:/opt/airflow/great_expectations
     - ./profiles.yml:/home/airflow/.dbt/profiles.yml
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -84,14 +86,22 @@ services:
       dockerfile: Dockerfiles/airflow_db.Dockerfile
     env_file:
       - .env
-    # environment:
+      # environment:
       # POSTGRES_USER: airflow_user
       # POSTGRES_PASSWORD: airflow_pw
       # POSTGRES_DB: airflow_metadata_db
     volumes:
-      - postgres-db-volume:/var/lib/postgresql/data
+      - adwh_airflow_db_volumn:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      test:
+        [
+          "CMD",
+          "pg_isready",
+          "-U",
+          "${POSTGRES_USER}",
+          "-d",
+          "${POSTGRES_DB}"
+        ]
       interval: 5s
       retries: 5
     restart: always
@@ -110,9 +120,19 @@ services:
     ports:
       - "5431:5432"
     volumes:
-      - dwh_db_volume:/var/lib/postgresql/data/
+      - adwh_db_volume:/var/lib/postgresql/data/
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}", "-p", "5431"]
+      test:
+        [
+          "CMD",
+          "pg_isready",
+          "-U",
+          "$${POSTGRES_USER}",
+          "-d",
+          "$${POSTGRES_DB}",
+          "-p",
+          "5431"
+        ]
       interval: 5s
       retries: 5
     restart: always
@@ -130,7 +150,7 @@ services:
     ports:
       - "5678:80"
     volumes:
-      - dwh_admin_volume:/var/lib/pgadmin
+      - adwh_admin_volume:/var/lib/pgadmin
 
   redis:
     build:
@@ -139,7 +159,7 @@ services:
     expose:
       - 6379
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 30s
       retries: 50
@@ -151,7 +171,13 @@ services:
     ports:
       - 8080:8080
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "http://localhost:8080/health"
+        ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -165,7 +191,11 @@ services:
     <<: *airflow-common
     command: scheduler
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"'
+        ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -200,7 +230,11 @@ services:
     <<: *airflow-common
     command: triggerer
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"'
+        ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -312,7 +346,7 @@ services:
     ports:
       - 5555:5555
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+      test: [ "CMD", "curl", "--fail", "http://localhost:5555/" ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -323,6 +357,6 @@ services:
         condition: service_completed_successfully
 
 volumes:
-  postgres-db-volume:
-  dwh_db_volume:
-  dwh_admin_volume:
+  adwh_airflow_db_volumn:
+  adwh_db_volume:
+  adwh_admin_volume:

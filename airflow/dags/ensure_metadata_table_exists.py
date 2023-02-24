@@ -2,6 +2,7 @@ import datetime as dt
 import logging
 
 from airflow.decorators import dag, task
+from airflow.models.baseoperator import chain
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -50,7 +51,7 @@ def ensure_metadata_table_exists():
             )
             return "metadata_table_exists"
 
-    @task(trigger_rule=TriggerRule.NONE_FAILED)
+    @task(trigger_rule=TriggerRule.ALL_DONE)
     def create_metadata_schema() -> None:
         task_logger.info(f"inside create_metadata_schema")
         engine = _get_pg_engine(conn_id=POSTGRES_CONN_ID)
@@ -69,7 +70,7 @@ def ensure_metadata_table_exists():
         except Exception as e:
             print(f"Failed to create metadata schema. Error: {e}, {type(e)}")
 
-    @task.branch(trigger_rule=TriggerRule.NONE_FAILED)
+    @task.branch(trigger_rule=TriggerRule.ALL_DONE)
     def metadata_table_exists(
         conn_id: str,
     ) -> str:
@@ -96,16 +97,21 @@ def ensure_metadata_table_exists():
         trigger_rule=TriggerRule.ALL_DONE,
     )
     metadata_table_exists_1 = EmptyOperator(
-        task_id="metadata_table_already_exists", trigger_rule=TriggerRule.NONE_FAILED_OR_SKIPPED
+        task_id="metadata_table_already_exists", trigger_rule=TriggerRule.ALL_DONE
     )
-    end_1 = EmptyOperator(task_id="end", trigger_rule=TriggerRule.NONE_FAILED)
+    end_1 = EmptyOperator(task_id="end", trigger_rule=TriggerRule.ALL_DONE)
 
-    metadata_schema_exists_branch_1 >> create_metadata_schema_1 >> create_metadata_table_1 >> end_1
-    (
-        metadata_schema_exists_branch_1
-        >> table_exists_in_schema_1
-        >> [create_metadata_table_1, metadata_table_exists_1]
-        >> end_1
+    chain(
+        metadata_schema_exists_branch_1,
+        create_metadata_schema_1,
+        create_metadata_table_1,
+        end_1,
+    )
+    chain(
+        metadata_schema_exists_branch_1,
+        table_exists_in_schema_1,
+        [create_metadata_table_1, metadata_table_exists_1],
+        end_1,
     )
 
 
