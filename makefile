@@ -21,7 +21,7 @@ clean_dbt:
 	docker compose exec airflow-scheduler /bin/bash -c "cd dbt && dbt deps";
 	docker compose exec airflow-scheduler /bin/bash -c "mkdir -p /opt/airflow/dbt/target"
 
-create_warehouse_infra: quiet_startup
+create_warehouse_infra:
 	docker compose exec airflow-scheduler /bin/bash -c \
 		"airflow dags trigger ensure_metadata_table_exists";
 	docker compose exec airflow-scheduler /bin/bash -c \

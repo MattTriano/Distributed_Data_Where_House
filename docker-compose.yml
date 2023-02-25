@@ -49,6 +49,8 @@ x-airflow-common:
     dockerfile: ./Dockerfiles/airflow.Dockerfile
   env_file:
     - .env
+  networks:
+    - celery_net
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
@@ -79,6 +81,22 @@ x-airflow-common:
     airflow_db:
       condition: service_healthy
 
+x-superset-common:
+  &superset-common
+  build:
+    context: ./
+    dockerfile: Dockerfiles/superset.Dockerfile
+  networks:
+    - celery_net
+  env_file:
+    - .env.superset
+  depends_on:
+    &superset-common-depends-on
+    redis:
+      condition: service_healthy
+    ss_db:
+      condition: service_healthy
+
 services:
   airflow_db:
     build:
@@ -92,6 +110,8 @@ services:
       # POSTGRES_DB: airflow_metadata_db
     volumes:
       - adwh_airflow_db_volumn:/var/lib/postgresql/data
+    networks:
+      - celery_net
     healthcheck:
       test:
         [
@@ -121,6 +141,8 @@ services:
       - "5431:5432"
     volumes:
       - adwh_db_volume:/var/lib/postgresql/data/
+    networks:
+      - celery_net
     healthcheck:
       test:
         [
@@ -151,6 +173,8 @@ services:
       - "5678:80"
     volumes:
       - adwh_admin_volume:/var/lib/pgadmin
+    networks:
+      - celery_net
 
   redis:
     build:
@@ -158,6 +182,10 @@ services:
       dockerfile: Dockerfiles/redis.Dockerfile
     expose:
       - 6379
+    volumes:
+      - redis_celery:/data
+    networks:
+      - celery_net
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
@@ -356,7 +384,62 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  superset:
+    <<: *superset-common
+    image: adwh_superset:2.0.1
+    command: [ "/app/docker/docker-bootstrap.sh", "app-gunicorn" ]
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    depends_on:
+      <<: *superset-common-depends-on
+      ss_init:
+        condition: service_completed_successfully
+    volumes:
+      - ss_core_celery:/app/superset_home
+
+  ss_db:
+    image: adwh_ss_db:14.5
+    build:
+      context: ./
+      dockerfile: Dockerfiles/airflow_db.Dockerfile
+    env_file:
+      - .env.superset
+    networks:
+      - celery_net
+    ports:
+      - "5442:5432"
+    volumes:
+      - ss_db_celery:/var/lib/postgresql/data/
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"
+        ]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  ss_init:
+    <<: *superset-common
+    command: [ "/app/docker/docker-init.sh" ]
+    depends_on:
+      - redis
+      - ss_db
+    volumes:
+      - ss_core_celery:/app/superset_home
+    healthcheck:
+      disable: true
+
+networks:
+  celery_net:
+
+
 volumes:
   adwh_airflow_db_volumn:
   adwh_db_volume:
   adwh_admin_volume:
+  ss_core_celery:
+  ss_db_celery:
+  redis_celery:
