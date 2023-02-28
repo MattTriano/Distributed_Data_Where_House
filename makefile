@@ -21,11 +21,28 @@ clean_dbt:
 	docker compose exec airflow-scheduler /bin/bash -c "cd dbt && dbt deps";
 	docker compose exec airflow-scheduler /bin/bash -c "mkdir -p /opt/airflow/dbt/target"
 
-create_warehouse_infra: quiet_startup
+initialize_system:
+	docker compose up airflow-init
+
+create_warehouse_infra:
 	docker compose exec airflow-scheduler /bin/bash -c \
-		"airflow dags trigger ensure_metadata_table_exists";
+		"airflow dags unpause ensure_metadata_table_exists &&\
+		 airflow dags trigger ensure_metadata_table_exists &&\
+		 airflow dags unpause setup_schemas &&\
+		 airflow dags trigger setup_schemas &&\
+		 cd /opt/airflow/dbt && dbt deps &&\
+		 mkdir -p /opt/airflow/dbt/models/intermediate &&\
+		 mkdir -p /opt/airflow/dbt/models/feature &&\
+		 mkdir -p /opt/airflow/dbt/models/dwh &&\
+		 mkdir -p /opt/airflow/dbt/models/report"
+	
+create_warehouse_infra_backup: initialize_system
+	docker compose up &&\
 	docker compose exec airflow-scheduler /bin/bash -c \
-		"airflow dags trigger setup_schemas";
+		"airflow dags unpause ensure_metadata_table_exists &&\
+		 airflow dags trigger ensure_metadata_table_exists &&\
+		 airflow dags unpause setup_schemas &&\
+		 airflow dags trigger setup_schemas";
 	docker compose exec airflow-scheduler /bin/bash -c "cd dbt && dbt deps";
 	docker compose exec airflow-scheduler /bin/bash -c \
 		"mkdir -p /opt/airflow/dbt/models/intermediate &&\

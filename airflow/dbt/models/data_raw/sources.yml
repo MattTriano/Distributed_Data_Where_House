@@ -7,10 +7,12 @@ sources:
       - raw
     tables:
       - name: chicago_potholes_patched
+      - name: chicago_towed_vehicles
       - name: cook_county_neighborhood_boundaries
       - name: cook_county_parcel_locations
       - name: cook_county_parcel_sales
       - name: temp_chicago_potholes_patched
+      - name: temp_chicago_towed_vehicles
       - name: temp_cook_county_neighborhood_boundaries
       - name: temp_cook_county_parcel_locations
       - name: temp_cook_county_parcel_sales

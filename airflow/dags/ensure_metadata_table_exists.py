@@ -115,4 +115,4 @@ def ensure_metadata_table_exists():
     )
 
 
-check_metadata_schema_dag = ensure_metadata_table_exists()
+ensure_metadata_table_exists()

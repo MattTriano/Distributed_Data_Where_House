@@ -1,68 +1,35 @@
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
-#
-
-# Basic Airflow cluster configuration for CeleryExecutor with Redis and PostgreSQL.
-#
-# WARNING: This configuration is for local development. Do not use it in a production deployment.
-#
-# This configuration supports basic configuration using environment variables or an .env file
-# The following variables are supported:
-#
-# AIRFLOW_IMAGE_NAME           - Docker image name used to run Airflow.
-#                                Default: apache/airflow:2.5.0
-# AIRFLOW_UID                  - User ID in Airflow containers
-#                                Default: 50000
-# Those configurations are useful mostly in case of standalone testing/running Airflow in test/try-out mode
-#
-# _AIRFLOW_WWW_USER_USERNAME   - Username for the administrator account (if requested).
-#                                Default: airflow
-# _AIRFLOW_WWW_USER_PASSWORD   - Password for the administrator account (if requested).
-#                                Default: airflow
-# _PIP_ADDITIONAL_REQUIREMENTS - Additional PIP requirements to add when starting all containers.
-#                                Default: ''
-#
-# Feel free to modify this file to suit your needs.
----
-version: '3'
 x-airflow-common:
-  # In order to add custom dependencies or upgrade provider packages you can use your extended image.
-  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
-  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
   &airflow-common
   build:
     context: ./
     dockerfile: ./Dockerfiles/airflow.Dockerfile
   env_file:
     - .env
+  networks:
+    - celery_net
   environment:
     &airflow-common-env
+    _AIRFLOW_WWW_USER_USERNAME: airflow_www_user
+    _AIRFLOW_WWW_USER_PASSWORD: airflow_www_password
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_pw@airflow_db/airflow_metadata_db
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow_user:airflow_pw@airflow_db/airflow_metadata_db
-    AIRFLOW_CONN_DWH_DB_CONN: postgres://dwh_user:dwh_pw@dwh_db:5432/dwh_db_name
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_password@airflow_db/airflow_metadata_db
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow_user:airflow_password@airflow_db/airflow_metadata_db
+    AIRFLOW_CONN_DWH_DB_CONN: postgres://dwh_db_user:dwh_db_password@dwh_db:5432/dwh_db_name
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    DWH_POSTGRES_DB: dwh_db_name
+    DWH_POSTGRES_USER: dwh_db_user
+    DWH_POSTGRES_PASSWORD: dwh_db_password
     GE_JUPYTER_CMD: "jupyter lab --allow-root --ip 0.0.0.0 --port 18888"
+    POSTGRES_USER: airflow_user
+    POSTGRES_PASSWORD: airflow_password
+    POSTGRES_DB: airflow_metadata_db
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+    SQLALCHEMY_SILENCE_UBER_WARNING: 1
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -79,28 +46,109 @@ x-airflow-common:
     airflow_db:
       condition: service_healthy
 
+x-superset-common:
+  &superset-common
+  build:
+    context: ./
+    dockerfile: Dockerfiles/superset.Dockerfile
+  networks:
+    - celery_net
+  # env_file:
+  #   - .env.superset
+  environment:
+    SUPERSET_LOAD_EXAMPLES: false
+    ADMIN_EMAIL: superset_admin@email.com
+    ADMIN_FIRST_NAME: superset_admin_firstname
+    ADMIN_LAST_NAME: superset_admin_lastname
+    ADMIN_PASSWORD: superset_admin_password
+    ADMIN_USERNAME: superser_admin_username
+    POSTGRES_DB: superset_db
+    POSTGRES_USER: superset_db_user
+    POSTGRES_PASSWORD: superset_db_password
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    # f"{DIALECT}://{USER}:{PASSWORD}@{HOST}:{PORT}/{DB}"
+    SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://superset_db_user:superset_db_password@ss_db:5432/superset_db
+    SECRET_KEY: my_superset_secret_key
+  depends_on:
+    &superset-common-depends-on
+    redis:
+      condition: service_healthy
+    ss_db:
+      condition: service_healthy
+
 services:
+  superset:
+    <<: *superset-common
+    image: adwh_superset:2.0.1
+    command: [ "/app/docker/docker-bootstrap.sh", "app-gunicorn" ]
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    depends_on:
+      <<: *superset-common-depends-on
+      ss_init:
+        condition: service_completed_successfully
+    volumes:
+      - ss_core_celery_vol:/app/superset_home
+
+  ss_db:
+    image: adwh_ss_db:14.5
+    build:
+      context: ./
+      dockerfile: Dockerfiles/airflow_db.Dockerfile
+    # env_file:
+    #   - .env.superset
+    environment:
+      POSTGRES_DB: superset_db
+      POSTGRES_USER: superset_db_user
+      POSTGRES_PASSWORD: superset_db_password
+    networks:
+      - celery_net
+    ports:
+      - "5442:5432"
+    volumes:
+      - ss_db_celery_vol:/var/lib/postgresql/data/
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -h ss_db -d $${POSTGRES_DB} -U $${POSTGRES_USER}"
+        ]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  ss_init:
+    <<: *superset-common
+    command: [ "/app/docker/docker-init.sh" ]
+    depends_on:
+      - redis
+      - ss_db
+    volumes:
+      - ss_core_celery_vol:/app/superset_home
+    healthcheck:
+      disable: true
+
   airflow_db:
     build:
       context: ./
       dockerfile: Dockerfiles/airflow_db.Dockerfile
-    env_file:
-      - .env
-      # environment:
-      # POSTGRES_USER: airflow_user
-      # POSTGRES_PASSWORD: airflow_pw
-      # POSTGRES_DB: airflow_metadata_db
+      # env_file:
+      # - .env
+    environment:
+      POSTGRES_USER: airflow_user
+      POSTGRES_PASSWORD: airflow_password
+      POSTGRES_DB: airflow_metadata_db
     volumes:
-      - adwh_airflow_db_volumn:/var/lib/postgresql/data
+      - airflow_db_celery_vol:/var/lib/postgresql/data
+    networks:
+      - celery_net
     healthcheck:
       test:
         [
-          "CMD",
-          "pg_isready",
-          "-U",
-          "${POSTGRES_USER}",
-          "-d",
-          "${POSTGRES_DB}"
+          "CMD-SHELL",
+          "pg_isready -h airflow_db -d $${POSTGRES_DB} -U $${POSTGRES_USER}"
         ]
       interval: 5s
       retries: 5
@@ -111,27 +159,23 @@ services:
       context: ./
       dockerfile: Dockerfiles/postgis.Dockerfile
     shm_size: 4gb
-    env_file:
-      - .dwh.env
-    # environment:
-    #   POSTGRES_USER: dwh_user
-    #   POSTGRES_PASSWORD: dwh_pw
-    #   POSTGRES_DB: dwh_db_name
+    # env_file:
+    #   - .dwh.env
+    environment:
+      POSTGRES_DB: dwh_db_name
+      POSTGRES_USER: dwh_db_user
+      POSTGRES_PASSWORD: dwh_db_password
     ports:
       - "5431:5432"
     volumes:
-      - adwh_db_volume:/var/lib/postgresql/data/
+      - adwh_db_celery_vol:/var/lib/postgresql/data/
+    networks:
+      - celery_net
     healthcheck:
       test:
         [
-          "CMD",
-          "pg_isready",
-          "-U",
-          "$${POSTGRES_USER}",
-          "-d",
-          "$${POSTGRES_DB}",
-          "-p",
-          "5431"
+          "CMD-SHELL",
+          "pg_isready -h dwh_db -d $${POSTGRES_DB} -U $${POSTGRES_USER}"
         ]
       interval: 5s
       retries: 5
@@ -142,15 +186,17 @@ services:
       context: ./
       dockerfile: ./Dockerfiles/pgadmin4.Dockerfile
     environment:
-      PGADMIN_DEFAULT_EMAIL: email@email.com
-      PGADMIN_DEFAULT_PASSWORD: pgadmin_pw
+      PGADMIN_DEFAULT_EMAIL: pgadmin@email.com
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_password
     restart: always
     depends_on:
       - dwh_db
     ports:
       - "5678:80"
     volumes:
-      - adwh_admin_volume:/var/lib/pgadmin
+      - pgadmin_celery_vol:/var/lib/pgadmin
+    networks:
+      - celery_net
 
   redis:
     build:
@@ -158,6 +204,10 @@ services:
       dockerfile: Dockerfiles/redis.Dockerfile
     expose:
       - 6379
+    volumes:
+      - redis_celery_vol:/data
+    networks:
+      - celery_net
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
@@ -169,7 +219,7 @@ services:
     <<: *airflow-common
     command: webserver
     ports:
-      - 8080:8080
+      - "8080:8080"
     healthcheck:
       test:
         [
@@ -315,8 +365,6 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_UPGRADE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow_user}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow_pw}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
     volumes:
@@ -341,8 +389,6 @@ services:
   flower:
     <<: *airflow-common
     command: celery flower
-    # profiles:
-    #   - flower
     ports:
       - 5555:5555
     healthcheck:
@@ -356,7 +402,14 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+networks:
+  celery_net:
+
+
 volumes:
-  adwh_airflow_db_volumn:
-  adwh_db_volume:
-  adwh_admin_volume:
+  airflow_db_celery_vol:
+  adwh_db_celery_vol:
+  pgadmin_celery_vol:
+  ss_core_celery_vol:
+  ss_db_celery_vol:
+  redis_celery_vol:
